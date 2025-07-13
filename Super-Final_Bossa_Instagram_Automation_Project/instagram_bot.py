@@ -300,7 +300,7 @@ class InstagramBot:
         return cleaned_users
         
     def login(self):
-        """Універсальний вхід в акаунт (працює з різними версіями сторінки)"""
+        """Універсальний вхід в акаунт з підтримкою ВСІХ типів сторінок Instagram"""
         try:
             # Перевірка правильності даних
             if not self.validate_credentials():
@@ -314,26 +314,45 @@ class InstagramBot:
             page_type = self.detect_login_page_type()
             self.logger.info(f"Виявлено тип сторінки входу: {page_type}")
             
-            if page_type == "new_layout":
+            if page_type == "third_type_bloks":
+                return self.login_third_type_bloks()
+            elif page_type == "new_layout":
                 return self.login_new_layout()
             elif page_type == "old_layout":
                 return self.login_old_layout()
             else:
-                # Якщо не вдалося визначити, пробуємо обидва методи
-                self.logger.info("Тип сторінки не визначено, пробуємо обидва методи")
+                # Якщо не вдалося визначити, пробуємо всі методи поспіль
+                self.logger.info("Тип сторінки не визначено, пробуємо всі методи поспіль")
+                
+                # Спочатку пробуємо третій тип (найновіший)
+                if self.login_third_type_bloks():
+                    return True
+                    
+                # Потім новий тип
                 if self.login_new_layout():
                     return True
+                    
+                # Нарешті старий тип
                 return self.login_old_layout()
                 
         except Exception as e:
             self.logger.error(f"Помилка при вході: {e}")
             return False
-            close
+
     def detect_login_page_type(self):
-        """Покращене визначення типу сторінки входу"""
+        """Покращене визначення типу сторінки входу з підтримкою третього типу (Bloks UI)"""
         try:
             # Очікуємо повного завантаження сторінки
             self.human_like_delay(3, 5)
+            
+            # Індикатори третього типу сторінки (новий Bloks UI)
+            third_type_indicators = [
+                "div[data-bloks-name='bk.components.Flexbox']",
+                "div[aria-label='Увійти']",
+                "div[role='button'][aria-label='Увійти']",
+                "div[class*='wbloks']",
+                "div[data-bloks-name]"
+            ]
             
             # Сильні індикатори нової версії
             new_layout_strong = [
@@ -358,10 +377,21 @@ class InstagramBot:
                 "input[aria-label*='Username']"
             ]
             
+            third_type_score = 0
             new_strong_score = 0
             old_strong_score = 0
             new_weak_score = 0
             old_weak_score = 0
+            
+            # Перевірка третього типу (Bloks UI) - найвища пріоритетність
+            for selector in third_type_indicators:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    if any(el.is_displayed() for el in elements):
+                        third_type_score += 3  # Висока вага для Bloks UI
+                        self.logger.debug(f"Знайдено індикатор третього типу: {selector}")
+                except:
+                    pass
             
             # Перевірка сильних індикаторів нової версії
             for selector in new_layout_strong:
@@ -404,11 +434,14 @@ class InstagramBot:
             new_total_score = new_strong_score + new_weak_score
             old_total_score = old_strong_score + old_weak_score
             
+            self.logger.debug(f"Оцінки: Третій тип (Bloks) - {third_type_score}")
             self.logger.debug(f"Оцінки: Нова версія - {new_total_score} (сильні: {new_strong_score}, слабкі: {new_weak_score})")
             self.logger.debug(f"Оцінки: Стара версія - {old_total_score} (сильні: {old_strong_score}, слабкі: {old_weak_score})")
             
-            # Якщо є сильні індикатори - віддаємо перевагу їм
-            if new_strong_score > 0 and old_strong_score == 0:
+            # Визначення типу на основі оцінок
+            if third_type_score > 0:  # Якщо є хоча б один індикатор третього типу
+                return "third_type_bloks"
+            elif new_strong_score > 0 and old_strong_score == 0:
                 return "new_layout"
             elif old_strong_score > 0 and new_strong_score == 0:
                 return "old_layout"
@@ -430,9 +463,221 @@ class InstagramBot:
         except Exception as e:
             self.logger.error(f"Помилка визначення типу сторінки: {e}")
             return "unknown"
+
+    def login_third_type_bloks(self):
+        """НОВИЙ метод для третього типу сторінки (Bloks UI) з покращеним виключенням кнопок пароля"""
+        try:
+            self.logger.info("Використання методу для третього типу сторінки (Bloks UI)")
+            
+            # Пошук поля username для третього типу
+            username_selectors = [
+                "input[name='username']",
+                "input[placeholder*='Номер телефону, ім'я користувача']",
+                "input[placeholder*='Phone number, username']",
+                "input[autocomplete='username']",
+                "input[type='text']"
+            ]
+            
+            username_input = None
+            for selector in username_selectors:
+                try:
+                    username_input = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                    if username_input.is_displayed():
+                        self.logger.info(f"Знайдено поле username: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not username_input:
+                self.logger.warning("Не знайдено поле username в третьому типі")
+                return False
+            
+            # Пошук поля password для третього типу
+            password_selectors = [
+                "input[name='password']",
+                "input[type='password']",
+                "input[autocomplete='current-password']"
+            ]
+            
+            password_input = None
+            for selector in password_selectors:
+                try:
+                    password_input = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if password_input.is_displayed():
+                        self.logger.info(f"Знайдено поле password: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not password_input:
+                self.logger.warning("Не знайдено поле password в третьому типі")
+                return False
+            
+            # Введення даних
+            self.logger.info("Введення username...")
+            username_input.clear()
+            self.anti_detection.human_typing(username_input, self.username)
+            self.human_like_delay(1, 2)
+                
+            self.logger.info("Введення password...")
+            password_input.clear()
+            self.anti_detection.human_typing(password_input, self.password)
+            self.human_like_delay(1, 2)
+            
+            # ПОКРАЩЕНИЙ ПОШУК КНОПКИ ВХОДУ ДЛЯ ТРЕТЬОГО ТИПУ З ВИКЛЮЧЕННЯМ КНОПОК ПАРОЛЯ
+            login_button = None
+            
+            # Метод 1: Пошук по aria-label (найточніший) з виключенням кнопок пароля
+            aria_label_selectors = [
+                "div[role='button'][aria-label='Увійти']",
+                "button[aria-label='Увійти']",
+                "div[role='button'][aria-label='Log in']",
+                "button[aria-label='Log in']",
+                "div[role='button'][aria-label='Log In']",
+                "button[aria-label='Log In']"
+            ]
+            
+            for selector in aria_label_selectors:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    for element in elements:
+                        if not element.is_displayed() or not element.is_enabled():
+                            continue
+                            
+                        # Додаткова перевірка: переконуємось що це НЕ кнопка показати/приховати пароль
+                        aria_label = element.get_attribute('aria-label') or ''
+                        element_text = element.get_attribute('textContent') or element.text or ''
+                        
+                        # КРИТИЧНО ВАЖЛИВО: Виключаємо кнопки пов'язані з паролем
+                        password_keywords = ['show', 'hide', 'показати', 'приховати', 'password', 'пароль', 'show password', 'hide password']
+                        if any(keyword.lower() in aria_label.lower() for keyword in password_keywords):
+                            self.logger.debug(f"❌ Пропускаємо кнопку пароля: {aria_label}")
+                            continue
+                        
+                        if any(keyword.lower() in element_text.lower() for keyword in password_keywords):
+                            self.logger.debug(f"❌ Пропускаємо кнопку пароля по тексту: {element_text}")
+                            continue
+                        
+                        # Виключаємо елементи без тексту або з неправильним текстом
+                        if len(element_text.strip()) > 50:  # Занадто довгий текст
+                            continue
+                            
+                        login_button = element
+                        self.logger.info(f"✅ Знайдено кнопку входу по aria-label: {selector}, текст: '{element_text.strip()}'")
+                        break
+                    if login_button:
+                        break
+                except:
+                    continue
+            
+            # Метод 2: Пошук по Bloks структурі (якщо aria-label не спрацював)
+            if not login_button:
+                bloks_selectors = [
+                    "div[data-bloks-name='bk.components.Flexbox'][role='button'][tabindex='0']",
+                    "div[data-bloks-name='bk.components.Flexbox'][role='button']",
+                    "div[class*='wbloks'][role='button'][tabindex='0']",
+                    "div[class*='wbloks'][role='button']"
+                ]
+                
+                for selector in bloks_selectors:
+                    try:
+                        elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        for element in elements:
+                            if not element.is_displayed() or not element.is_enabled():
+                                continue
+                                
+                            element_text = element.get_attribute('textContent') or element.text or ''
+                            aria_label = element.get_attribute('aria-label') or ''
+                            
+                            # Виключаємо кнопки пароля
+                            password_keywords = ['show', 'hide', 'показати', 'приховати', 'password', 'пароль']
+                            if any(keyword.lower() in (element_text + aria_label).lower() for keyword in password_keywords):
+                                self.logger.debug(f"❌ Пропускаємо кнопку пароля в Bloks: {element_text}")
+                                continue
+                            
+                            # Перевіряємо що це кнопка входу
+                            login_keywords = ['увійти', 'log in', 'login', 'sign in']
+                            if any(keyword.lower() in element_text.lower() for keyword in login_keywords):
+                                login_button = element
+                                self.logger.info(f"✅ Знайдено кнопку входу по Bloks: {selector}, текст: '{element_text.strip()}'")
+                                break
+                        if login_button:
+                            break
+                    except:
+                        continue
+            
+            # Метод 3: Пошук кнопки поруч з полями вводу (найбезпечніший)
+            if not login_button:
+                try:
+                    # Знаходимо форму або контейнер з полями
+                    form_container = password_input.find_element(By.XPATH, "./ancestor::form[1] | ./ancestor::div[contains(@class, '') or contains(@style, '')][3]")
+                    
+                    # Шукаємо кнопки в формі
+                    form_buttons = form_container.find_elements(By.CSS_SELECTOR, "button, div[role='button']")
+                    
+                    for button in form_buttons:
+                        if not button.is_displayed() or not button.is_enabled():
+                            continue
+                            
+                        button_text = button.get_attribute('textContent') or button.text or ''
+                        aria_label = button.get_attribute('aria-label') or ''
+                        
+                        # КРИТИЧНО: Виключаємо кнопки пароля
+                        password_keywords = ['show', 'hide', 'показати', 'приховати', 'password', 'пароль']
+                        if any(keyword.lower() in (button_text + aria_label).lower() for keyword in password_keywords):
+                            self.logger.debug(f"❌ Пропускаємо кнопку пароля в формі: {button_text}")
+                            continue
+                        
+                        # Шукаємо кнопку входу
+                        login_keywords = ['увійти', 'log in', 'login']
+                        if (any(keyword in button_text.lower() for keyword in login_keywords) or
+                            any(keyword in aria_label.lower() for keyword in login_keywords) or
+                            button.get_attribute('type') == 'submit'):
+                            
+                            login_button = button
+                            self.logger.info(f"✅ Знайдено кнопку входу в формі, текст: '{button_text.strip()}'")
+                            break
+                            
+                except Exception as e:
+                    self.logger.debug(f"Помилка пошуку в формі: {e}")
+            
+            # Спроба входу
+            if login_button:
+                self.logger.info("Натискання кнопки входу (третій тип)...")
+                try:
+                    # Скролимо до кнопки якщо потрібно
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", login_button)
+                    self.human_like_delay(0.5, 1)
+                    
+                    # Спочатку звичайний клік
+                    login_button.click()
+                    self.logger.info("✅ Використано звичайний клік на кнопку входу")
+                    
+                except Exception as e:
+                    self.logger.warning(f"Звичайний клік не спрацював: {e}")
+                    try:
+                        # JavaScript клік
+                        self.driver.execute_script("arguments[0].click();", login_button)
+                        self.logger.info("✅ Використано JavaScript клік на кнопку входу")
+                    except Exception as e2:
+                        self.logger.warning(f"JavaScript клік не спрацював: {e2}")
+                        # Останній варіант - Enter
+                        password_input.send_keys(Keys.RETURN)
+                        self.logger.info("✅ Використано Enter як останній варіант")
+            else:
+                self.logger.info("Кнопка входу не знайдена, використовуємо Enter...")
+                password_input.send_keys(Keys.RETURN)
+            
+            return self.wait_for_login_result()
+                
+        except Exception as e:
+            self.logger.error(f"❌ Помилка в третьому типі входу: {e}")
+            return False
             
     def login_new_layout(self):
-        """Вхід для нової версії сторінки"""
+        """Вхід для нової версії сторінки з покращеним виключенням кнопок пароля"""
         try:
             self.logger.info("Використання методу для нової версії сторінки")
             
@@ -492,31 +737,52 @@ class InstagramBot:
             self.anti_detection.human_typing(password_input, self.password)
             self.human_like_delay(1, 2)
             
-            # Пошук кнопки входу (нова версія)
+            # Пошук кнопки входу (нова версія) з виключенням кнопок пароля
             login_selectors = [
                 "button[type='submit']",
                 "div[role='button'][tabindex='0']",
                 "//button[contains(text(), 'Log in')]",
                 "//button[contains(text(), 'Log In')]",
-                "//div[@role='button' and contains(text(), 'Log')]"
+                "//div[@role='button' and contains(text(), 'Log')]",
+                "//button[contains(text(), 'Увійти')]",
+                "//div[@role='button' and contains(text(), 'Увійти')]"
             ]
             
             login_button = None
             for selector in login_selectors:
                 try:
                     if selector.startswith("//"):
-                        login_button = WebDriverWait(self.driver, 3).until(
-                            EC.element_to_be_clickable((By.XPATH, selector))
-                        )
+                        elements = self.driver.find_elements(By.XPATH, selector)
                     else:
-                        login_button = WebDriverWait(self.driver, 3).until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                        )
+                        elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
                     
-                    if login_button and login_button.is_displayed():
-                        self.logger.info(f"Знайдено кнопку входу: {selector}")
+                    for element in elements:
+                        if not element.is_displayed() or not element.is_enabled():
+                            continue
+                            
+                        element_text = element.get_attribute('textContent') or element.text or ''
+                        aria_label = element.get_attribute('aria-label') or ''
+                        
+                        # Виключаємо кнопки пароля
+                        password_keywords = ['show', 'hide', 'показати', 'приховати', 'password', 'пароль']
+                        if any(keyword.lower() in (element_text + aria_label).lower() for keyword in password_keywords):
+                            self.logger.debug(f"❌ Пропускаємо кнопку пароля: {element_text}")
+                            continue
+                        
+                        # Перевіряємо що це кнопка входу
+                        if (len(element_text.strip()) < 50 and 
+                            (any(keyword in element_text.lower() for keyword in ['log in', 'log', 'sign in', 'enter', 'увійти']) or
+                             element.get_attribute('type') == 'submit')):
+                            
+                            login_button = element
+                            self.logger.info(f"✅ Знайдено кнопку входу: {selector}, текст: '{element_text.strip()}'")
+                            break
+                    
+                    if login_button:
                         break
-                except:
+                        
+                except Exception as e:
+                    self.logger.debug(f"Помилка з селектором {selector}: {e}")
                     continue
             
             # Спроба входу
@@ -530,11 +796,11 @@ class InstagramBot:
             return self.wait_for_login_result()
                 
         except Exception as e:
-            self.logger.error(f"Помилка в новій версії входу: {e}")
+            self.logger.error(f"❌ Помилка в новій версії входу: {e}")
             return False
             
     def login_old_layout(self):
-        """Покращений вхід для старої версії сторінки"""
+        """Покращений вхід для старої версії сторінки з виключенням кнопок пароля"""
         try:
             self.logger.info("Використання покращеного методу для старої версії сторінки")
             
@@ -630,13 +896,15 @@ class InstagramBot:
             
             self.human_like_delay(1, 2)
             
-            # Покращений пошук кнопки входу для старої версії
+            # Покращений пошук кнопки входу для старої версії з виключенням кнопок пароля
             login_selectors = [
                 # Точні селектори для кнопки "Log in"
                 "//div[@role='button' and normalize-space(text())='Log in']",
                 "//div[@role='button' and normalize-space(text())='Log In']",
                 "//button[normalize-space(text())='Log in']",
                 "//button[normalize-space(text())='Log In']",
+                "//div[@role='button' and normalize-space(text())='Увійти']",
+                "//button[normalize-space(text())='Увійти']",
                 
                 # Селектори по структурі кнопки
                 "div[role='button'][tabindex='0']:has(div[dir='auto'])",
@@ -656,21 +924,30 @@ class InstagramBot:
                         elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
                     
                     for element in elements:
-                        if element.is_displayed() and element.is_enabled():
-                            element_text = element.get_attribute('textContent') or element.text or ""
+                        if not element.is_displayed() or not element.is_enabled():
+                            continue
                             
-                            # Фільтруємо кнопки по довжині тексту та змісту
-                            if len(element_text.strip()) < 50:  # Коротший текст
-                                if any(keyword in element_text.lower() for keyword in ['log in', 'log', 'sign in', 'enter']):
+                        element_text = element.get_attribute('textContent') or element.text or ""
+                        aria_label = element.get_attribute('aria-label') or ""
+                        
+                        # Виключаємо кнопки пароля
+                        password_keywords = ['show', 'hide', 'показати', 'приховати', 'password', 'пароль']
+                        if any(keyword.lower() in (element_text + aria_label).lower() for keyword in password_keywords):
+                            self.logger.debug(f"❌ Пропускаємо кнопку пароля: {element_text}")
+                            continue
+                        
+                        # Фільтруємо кнопки по довжині тексту та змісту
+                        if len(element_text.strip()) < 50:  # Коротший текст
+                            if any(keyword in element_text.lower() for keyword in ['log in', 'log', 'sign in', 'enter', 'увійти']):
+                                login_button = element
+                                self.logger.info(f"✅ Знайдено кнопку входу: {selector}, текст: '{element_text.strip()}'")
+                                break
+                            elif element_text.strip() == "":  # Кнопка без тексту, але з role='button'
+                                # Додаткова перевірка що це не випадковий елемент
+                                if element.get_attribute('tabindex') == '0':
                                     login_button = element
-                                    self.logger.info(f"Знайдено кнопку входу: {selector}, текст: '{element_text.strip()}'")
+                                    self.logger.info(f"✅ Знайдено кнопку входу без тексту: {selector}")
                                     break
-                                elif element_text.strip() == "":  # Кнопка без тексту, але з role='button'
-                                    # Додаткова перевірка що це не випадковий елемент
-                                    if element.get_attribute('tabindex') == '0':
-                                        login_button = element
-                                        self.logger.info(f"Знайдено кнопку входу без тексту: {selector}")
-                                        break
                     
                     if login_button:
                         break
@@ -691,7 +968,7 @@ class InstagramBot:
                         
                         # Пробуємо звичайний клік
                         login_button.click()
-                        self.logger.info("Використано звичайний клік")
+                        self.logger.info("✅ Використано звичайний клік")
                     else:
                         self.logger.warning("Кнопка не активна, використовуємо Enter")
                         password_input.send_keys(Keys.RETURN)
@@ -701,12 +978,12 @@ class InstagramBot:
                     try:
                         # Пробуємо JavaScript клік
                         self.driver.execute_script("arguments[0].click();", login_button)
-                        self.logger.info("Використано JavaScript клік")
+                        self.logger.info("✅ Використано JavaScript клік")
                     except Exception as e2:
                         self.logger.warning(f"JavaScript клік не спрацював: {e2}")
                         # Останній варіант - Enter
                         password_input.send_keys(Keys.RETURN)
-                        self.logger.info("Використано Enter як останній варіант")
+                        self.logger.info("✅ Використано Enter як останній варіант")
             else:
                 self.logger.info("Кнопка входу взагалі не знайдена, використовуємо прямий Enter...")
                 password_input.send_keys(Keys.RETURN)
@@ -714,7 +991,7 @@ class InstagramBot:
             return self.wait_for_login_result()
                 
         except Exception as e:
-            self.logger.error(f"Помилка в старій версії входу: {e}")
+            self.logger.error(f"❌ Помилка в старій версії входу: {e}")
             return False
             
     def wait_for_login_result(self):
@@ -763,7 +1040,7 @@ class InstagramBot:
                     # Успішний вхід
                     self.handle_post_login_dialogs()
                     self.logged_in = True
-                    self.logger.info(f"Успішний вхід для {self.username}")
+                    self.logger.info(f"✅ Успішний вхід для {self.username}")
                     return True
                 
                 # Перевірка на помилки входу
@@ -786,7 +1063,7 @@ class InstagramBot:
                         for error_el in error_elements:
                             if error_el.is_displayed() and error_el.text.strip():
                                 error_text = error_el.text.strip()
-                                self.logger.error(f"Помилка входу: {error_text}")
+                                self.logger.error(f"❌ Помилка входу: {error_text}")
                                 return False
                     except:
                         continue
@@ -807,7 +1084,7 @@ class InstagramBot:
                                 self.logger.info("Знайдено Home елемент - успішний вхід")
                                 self.handle_post_login_dialogs()
                                 self.logged_in = True
-                                self.logger.info(f"Успішний вхід для {self.username}")
+                                self.logger.info(f"✅ Успішний вхід для {self.username}")
                                 return True
                     except:
                         continue
@@ -825,13 +1102,13 @@ class InstagramBot:
                 if home_elements and any(el.is_displayed() for el in home_elements):
                     self.handle_post_login_dialogs()
                     self.logged_in = True
-                    self.logger.info(f"Успішний вхід для {self.username} (затримана перевірка)")
+                    self.logger.info(f"✅ Успішний вхід для {self.username} (затримана перевірка)")
                     return True
             
             return False
                 
         except Exception as e:
-            self.logger.error(f"Помилка при очікуванні результату: {e}")
+            self.logger.error(f"❌ Помилка при очікуванні результату: {e}")
             return False
             
     def handle_post_login_dialogs(self):
@@ -895,6 +1172,7 @@ class InstagramBot:
             pass
 
     def like_recent_posts(self, target_username, count=2):
+        """Лайк останніх постів користувача"""
         try:
             profile_url = f"https://www.instagram.com/{target_username}/"
             self.driver.get(profile_url)
@@ -1027,7 +1305,6 @@ class InstagramBot:
             self.logger.error(f"❌ Критична помилка при лайку постів: {e}")
             return False
 
-    
     def _send_story_reply(self, reply_input, message):
         """Надійний метод відправки повідомлення в сторіс"""
         try:
@@ -1158,7 +1435,7 @@ class InstagramBot:
         except Exception as e:
             self.logger.error(f"❌ Помилка відправки повідомлення: {e}")
             return False
-        
+
     def process_story(self, target_username, messages):
         """Покращена версія відповіді на сторіс"""
         try:
@@ -1265,7 +1542,6 @@ class InstagramBot:
             self.logger.error(f"❌ Помилка обробки сторіс: {e}")
             return False
 
-
     def _close_story(self):
         """Універсальне закриття сторіс"""
         try:
@@ -1293,236 +1569,235 @@ class InstagramBot:
             return False
     
     def send_direct_message(self, target_username, messages):
-     """Fallback: якщо сторіс немає → Direct Messages → Next → повідомлення"""
-
-     try:
-        self.logger.info(f"💬 Відправка Direct Message для {target_username}")
-        
-        # Перехід до Direct Messages
-        dm_url = "https://www.instagram.com/direct/new/"
-        self.driver.get(dm_url)
-        self.human_like_delay(3, 5)
-        
-        # Якщо direct/new не працює, пробуємо через inbox
-        if "direct/new" not in self.driver.current_url:
-            self.logger.info("💬 Перехід через inbox")
-            dm_url = "https://www.instagram.com/direct/inbox/"
+        """Fallback: якщо сторіс немає → Direct Messages → Next → повідомлення"""
+        try:
+            self.logger.info(f"💬 Відправка Direct Message для {target_username}")
+            
+            # Перехід до Direct Messages
+            dm_url = "https://www.instagram.com/direct/new/"
             self.driver.get(dm_url)
             self.human_like_delay(3, 5)
             
-            # Пошук кнопки нового повідомлення
-            new_message_selectors = [
-                "svg[aria-label='New message']",
-                "button[aria-label='New message']",
-                "//div[contains(text(), 'New message')]",
-                "//button[contains(text(), 'New message')]"
+            # Якщо direct/new не працює, пробуємо через inbox
+            if "direct/new" not in self.driver.current_url:
+                self.logger.info("💬 Перехід через inbox")
+                dm_url = "https://www.instagram.com/direct/inbox/"
+                self.driver.get(dm_url)
+                self.human_like_delay(3, 5)
+                
+                # Пошук кнопки нового повідомлення
+                new_message_selectors = [
+                    "svg[aria-label='New message']",
+                    "button[aria-label='New message']",
+                    "//div[contains(text(), 'New message')]",
+                    "//button[contains(text(), 'New message')]"
+                ]
+                
+                for selector in new_message_selectors:
+                    try:
+                        if selector.startswith("//"):
+                            new_message_button = WebDriverWait(self.driver, 5).until(
+                                EC.element_to_be_clickable((By.XPATH, selector))
+                            )
+                        else:
+                            new_message_button = WebDriverWait(self.driver, 5).until(
+                                EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                            )
+                        new_message_button.click()
+                        self.human_like_delay(2, 3)
+                        break
+                    except:
+                        continue
+            
+            # Пошук поля для введення імені користувача
+            search_selectors = [
+                "input[placeholder*='Search']",
+                "input[name='queryBox']",
+                "input[aria-label*='Search']",
+                "div[contenteditable='true']",
+                "input[placeholder*='search']",
+                "input[type='text']"
             ]
             
-            for selector in new_message_selectors:
+            search_input = None
+            for selector in search_selectors:
                 try:
-                    if selector.startswith("//"):
-                        new_message_button = WebDriverWait(self.driver, 5).until(
-                            EC.element_to_be_clickable((By.XPATH, selector))
-                        )
-                    else:
-                        new_message_button = WebDriverWait(self.driver, 5).until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                        )
-                    new_message_button.click()
-                    self.human_like_delay(2, 3)
+                    search_input = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                    )
                     break
                 except:
                     continue
-        
-        # Пошук поля для введення імені користувача
-        search_selectors = [
-            "input[placeholder*='Search']",
-            "input[name='queryBox']",
-            "input[aria-label*='Search']",
-            "div[contenteditable='true']",
-            "input[placeholder*='search']",
-            "input[type='text']"
-        ]
-        
-        search_input = None
-        for selector in search_selectors:
-            try:
-                search_input = WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                )
-                break
-            except:
-                continue
-        
-        if not search_input:
-            self.logger.error("❌ Не знайдено поле пошуку користувачів")
-            return False
-        
-        # Введення імені користувача
-        self.logger.info(f"🔍 Пошук користувача: {target_username}")
-        search_input.clear()
-        self.anti_detection.human_typing(search_input, target_username)
-        self.human_like_delay(2, 3)
-        
-        # Пошук користувача в результатах
-        user_found = False
-        
-        # Спочатку точний збіг
-        try:
-            exact_user = WebDriverWait(self.driver, 5).until(
-                EC.element_to_be_clickable((By.XPATH, f"//span[text()='{target_username}']"))
-            )
-            exact_user.click()
-            user_found = True
-            self.logger.info(f"✅ Знайдено користувача: {target_username}")
-        except:
-            # Частковий збіг 
-            try:
-                user_elements = self.driver.find_elements(By.CSS_SELECTOR, "div[role='button'] span")
-                for element in user_elements:
-                    if element.text and target_username.lower() in element.text.lower():
-                        parent = element.find_element(By.XPATH, "./ancestor::div[@role='button'][1]")
-                        parent.click()
-                        user_found = True
-                        self.logger.info(f"✅ Знайдено користувача: {element.text}")
-                        break
-            except:
-                pass
-        
-        if not user_found:
-            self.logger.error(f"❌ Користувач {target_username} не знайдений")
-            return False
-        
-        self.human_like_delay(2, 3)
-        
-        # ПОКРАЩЕНИЙ ПОШУК КНОПКИ "NEXT"
-        next_button_found = False
-        
-        # Метод 1: Пошук кнопки Next відносно поля пошуку
-        try:
-            search_container = search_input.find_element(By.XPATH, "./ancestor::div[3]")
-            next_selectors_relative = [
-                ".//button[contains(text(), 'Next')]",
-                ".//div[@role='button'][contains(text(), 'Next')]",
-                ".//button[contains(text(), 'Далі')]",
-                ".//div[@role='button'][contains(text(), 'Далі')]"
-            ]
             
-            for selector in next_selectors_relative:
-                try:
-                    next_button = search_container.find_element(By.XPATH, selector)
-                    if next_button.is_displayed() and next_button.is_enabled():
-                        next_button.click()
-                        next_button_found = True
-                        self.logger.info("✅ Натиснуто кнопку Next (відносний пошук)")
-                        break
-                except:
-                    continue
-                    
-        except Exception as e:
-            self.logger.debug(f"Помилка відносного пошуку Next: {e}")
-        
-        # Метод 2: Глобальний пошук кнопки Next
-        if not next_button_found:
-            next_selectors_global = [
-                "//div[@role='button'][contains(text(), 'Next')]",
-                "//button[contains(text(), 'Next')]",
-                "//div[@role='button'][contains(text(), 'Далі')]",
-                "//button[contains(text(), 'Далі')]"
-            ]
+            if not search_input:
+                self.logger.error("❌ Не знайдено поле пошуку користувачів")
+                return False
             
-            for selector in next_selectors_global:
-                try:
-                    next_button = WebDriverWait(self.driver, 3).until(
-                        EC.element_to_be_clickable((By.XPATH, selector))
-                    )
-                    if next_button.is_displayed():
-                        next_button.click()
-                        next_button_found = True
-                        self.logger.info("✅ Натиснуто кнопку Next (глобальний пошук)")
-                        break
-                except:
-                    continue
-        
-        # Обробка вікна, що може з'явитися після Next
-        if next_button_found:
+            # Введення імені користувача
+            self.logger.info(f"🔍 Пошук користувача: {target_username}")
+            search_input.clear()
+            self.anti_detection.human_typing(search_input, target_username)
             self.human_like_delay(2, 3)
+            
+            # Пошук користувача в результатах
+            user_found = False
+            
+            # Спочатку точний збіг
             try:
-                # Спроба знайти і закрити вікно "Not Now"
-                not_now_buttons = [
-                    "//button[contains(text(), 'Not Now')]",
-                    "//div[@role='button'][contains(text(), 'Not Now')]",
-                    "//button[contains(text(), 'Не зараз')]",
-                    "//div[@role='button'][contains(text(), 'Не зараз')]"
+                exact_user = WebDriverWait(self.driver, 5).until(
+                    EC.element_to_be_clickable((By.XPATH, f"//span[text()='{target_username}']"))
+                )
+                exact_user.click()
+                user_found = True
+                self.logger.info(f"✅ Знайдено користувача: {target_username}")
+            except:
+                # Частковий збіг 
+                try:
+                    user_elements = self.driver.find_elements(By.CSS_SELECTOR, "div[role='button'] span")
+                    for element in user_elements:
+                        if element.text and target_username.lower() in element.text.lower():
+                            parent = element.find_element(By.XPATH, "./ancestor::div[@role='button'][1]")
+                            parent.click()
+                            user_found = True
+                            self.logger.info(f"✅ Знайдено користувача: {element.text}")
+                            break
+                except:
+                    pass
+            
+            if not user_found:
+                self.logger.error(f"❌ Користувач {target_username} не знайдений")
+                return False
+            
+            self.human_like_delay(2, 3)
+            
+            # ПОКРАЩЕНИЙ ПОШУК КНОПКИ "NEXT"
+            next_button_found = False
+            
+            # Метод 1: Пошук кнопки Next відносно поля пошуку
+            try:
+                search_container = search_input.find_element(By.XPATH, "./ancestor::div[3]")
+                next_selectors_relative = [
+                    ".//button[contains(text(), 'Next')]",
+                    ".//div[@role='button'][contains(text(), 'Next')]",
+                    ".//button[contains(text(), 'Далі')]",
+                    ".//div[@role='button'][contains(text(), 'Далі')]"
                 ]
                 
-                for selector in not_now_buttons:
+                for selector in next_selectors_relative:
                     try:
-                        not_now_btn = WebDriverWait(self.driver, 3).until(
-                            EC.element_to_be_clickable((By.XPATH, selector))
-                        )
-                        if not_now_btn.is_displayed():
-                            not_now_btn.click()
-                            self.logger.info("✅ Закрито вікно 'Not Now'")
-                            self.human_like_delay(1, 2)
+                        next_button = search_container.find_element(By.XPATH, selector)
+                        if next_button.is_displayed() and next_button.is_enabled():
+                            next_button.click()
+                            next_button_found = True
+                            self.logger.info("✅ Натиснуто кнопку Next (відносний пошук)")
                             break
                     except:
                         continue
+                        
             except Exception as e:
-                self.logger.debug(f"Не знайдено вікна для закриття: {e}")
-        
-        # Пошук поля для повідомлення
-        message_selectors = [
-            "textarea[placeholder*='Message']",
-            "div[contenteditable='true'][aria-label*='Message']",
-            "div[contenteditable='true']",
-            "textarea[aria-label*='Message']"
-        ]
-        
-        message_input = None
-        for selector in message_selectors:
+                self.logger.debug(f"Помилка відносного пошуку Next: {e}")
+            
+            # Метод 2: Глобальний пошук кнопки Next
+            if not next_button_found:
+                next_selectors_global = [
+                    "//div[@role='button'][contains(text(), 'Next')]",
+                    "//button[contains(text(), 'Next')]",
+                    "//div[@role='button'][contains(text(), 'Далі')]",
+                    "//button[contains(text(), 'Далі')]"
+                ]
+                
+                for selector in next_selectors_global:
+                    try:
+                        next_button = WebDriverWait(self.driver, 3).until(
+                            EC.element_to_be_clickable((By.XPATH, selector))
+                        )
+                        if next_button.is_displayed():
+                            next_button.click()
+                            next_button_found = True
+                            self.logger.info("✅ Натиснуто кнопку Next (глобальний пошук)")
+                            break
+                    except:
+                        continue
+            
+            # Обробка вікна, що може з'явитися після Next
+            if next_button_found:
+                self.human_like_delay(2, 3)
+                try:
+                    # Спроба знайти і закрити вікно "Not Now"
+                    not_now_buttons = [
+                        "//button[contains(text(), 'Not Now')]",
+                        "//div[@role='button'][contains(text(), 'Not Now')]",
+                        "//button[contains(text(), 'Не зараз')]",
+                        "//div[@role='button'][contains(text(), 'Не зараз')]"
+                    ]
+                    
+                    for selector in not_now_buttons:
+                        try:
+                            not_now_btn = WebDriverWait(self.driver, 3).until(
+                                EC.element_to_be_clickable((By.XPATH, selector))
+                            )
+                            if not_now_btn.is_displayed():
+                                not_now_btn.click()
+                                self.logger.info("✅ Закрито вікно 'Not Now'")
+                                self.human_like_delay(1, 2)
+                                break
+                        except:
+                            continue
+                except Exception as e:
+                    self.logger.debug(f"Не знайдено вікна для закриття: {e}")
+            
+            # Пошук поля для повідомлення
+            message_selectors = [
+                "textarea[placeholder*='Message']",
+                "div[contenteditable='true'][aria-label*='Message']",
+                "div[contenteditable='true']",
+                "textarea[aria-label*='Message']"
+            ]
+            
+            message_input = None
+            for selector in message_selectors:
+                try:
+                    message_input = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                    )
+                    break
+                except:
+                    continue
+            
+            if not message_input:
+                self.logger.error("❌ Не знайдено поле для введення повідомлення")
+                return False
+            
+            message = random.choice(messages)
+            self.logger.info(f"💬 Вибрано повідомлення ({len(message.splitlines())} рядків):")
+            for i, line in enumerate(message.splitlines()):
+                self.logger.info(f"   Рядок {i+1}: {line}")
+
+            # Введення повідомлення
+            self.logger.info(f"💬 Введення повідомлення: {message}")
+
+            message_input.clear()
+            self.fast_typing(message_input, message)
+            self.human_like_delay(0.5, 1)
+
+            # Відправка повідомлення
             try:
-                message_input = WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                )
-                break
-            except:
-                continue
-        
-        if not message_input:
-            self.logger.error("❌ Не знайдено поле для введення повідомлення")
-            return False
-        
-        message = random.choice(messages)
-        self.logger.info(f"💬 Вибрано повідомлення ({len(message.splitlines())} рядків):")
-        for i, line in enumerate(message.splitlines()):
-            self.logger.info(f"   Рядок {i+1}: {line}")
-
-        # Введення повідомлення
-        self.logger.info(f"💬 Введення повідомлення: {message}")
-
-        message_input.clear()
-        self.fast_typing(message_input, message)
-        self.human_like_delay(0.5, 1)
-
-        # Відправка повідомлення
-        try:
-            message_input.send_keys(Keys.RETURN)
-            self.logger.info(f"✅ Direct Message відправлено для {target_username}")
-            return True
-        except:
-            try:
-                send_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-                send_button.click()
+                message_input.send_keys(Keys.RETURN)
                 self.logger.info(f"✅ Direct Message відправлено для {target_username}")
                 return True
             except:
-                self.logger.error("❌ Не вдалося відправити повідомлення")
-                return False
+                try:
+                    send_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+                    send_button.click()
+                    self.logger.info(f"✅ Direct Message відправлено для {target_username}")
+                    return True
+                except:
+                    self.logger.error("❌ Не вдалося відправити повідомлення")
+                    return False
 
-     except Exception as e:
-        self.logger.error(f"❌ Помилка при відправці Direct Message: {e}")
-        return False
+        except Exception as e:
+            self.logger.error(f"❌ Помилка при відправці Direct Message: {e}")
+            return False
 
     # === НОВИЙ МЕТОД: БАГАТОКОРИСТУВАЦЬКА АВТОМАТИЗАЦІЯ ===
     def run_automation_multiple_users(self, target_users_input, messages, actions_config=None):
@@ -1908,14 +2183,13 @@ class InstagramBot:
 
                 if not story_replied:
                     self.logger.warning("⚠️ Не вдалося відправити відповідь на сторіс")
-                # ВАЖЛИВО: ЧЕКАЄМО 5 СЕКУНД ПІСЛЯ ВСІХ ДІЙ
-                self.logger.info("⏳ Обов'язкове очікування 5 секунд після всіх дій в сторіс...")
-                time.sleep(5)
-                self.logger.info("✅ Очікування завершено")
 
-# Закриття сторіс (тільки після очікування)
+            # ВАЖЛИВО: ЧЕКАЄМО 5 СЕКУНД ПІСЛЯ ВСІХ ДІЙ
+            self.logger.info("⏳ Обов'язкове очікування 5 секунд після всіх дій в сторіс...")
+            time.sleep(5)
+            self.logger.info("✅ Очікування завершено")
 
-            # Закриття сторіс
+            # Закриття сторіс (тільки після очікування)
             close_selectors = [
                 "svg[aria-label='Close']",
                 "button[aria-label='Close']",
@@ -1985,11 +2259,10 @@ class InstagramBot:
                 self.logger.error(f"Помилка закриття Dolphin профілю: {e}")
 
     def __del__(self):
-     try:
-        self.close()
-     except Exception:
-        pass  # Ігноруємо будь-які помилки при знищенні об'єкта
-
+        try:
+            self.close()
+        except Exception:
+            pass  # Ігноруємо будь-які помилки при знищенні об'єкта
 
 
 # Приклад використання з багатьма користувачами
@@ -2056,31 +2329,44 @@ Looking forward to more! 💯""",
     bot = InstagramBot(USERNAME, PASSWORD)
     
     try:
-        print("🚀 Instagram Bot з БАГАТОКОРИСТУВАЦЬКОЮ підтримкою")
-        print("=" * 60)
-        print("📋 Можливості:")
+        print("🚀 ПОВНІСТЮ ОНОВЛЕНИЙ Instagram Bot з підтримкою ВСІХ типів сторінок входу")
+        print("=" * 80)
+        print("🔧 НОВІ МОЖЛИВОСТІ:")
+        print("✅ Третій тип сторінки входу (Bloks UI) з aria-label='Увійти'")
+        print("✅ Розумне виключення кнопок 'показати пароль'")
+        print("✅ Потрійний fallback механізм для входу")
+        print("✅ Покращена надійність входу")
+        print("=" * 80)
+        print("📋 Підтримувані типи сторінок входу:")
+        print("  🎯 Тип 1: Нова версія (input[name='username'] + button[type='submit'])")
+        print("  🎯 Тип 2: Стара версія (aria-label + div[role='button'])")
+        print("  🎯 Тип 3: Bloks UI (data-bloks-name + aria-label='Увійти') ← НОВИЙ!")
+        print("=" * 80)
+        print("📋 Багатокористувацькі можливості:")
         print("✅ Один користувач: просто вкажіть ім'я")
         print("✅ Багато користувачів: через кому, крапку з комою, пробіл або новий рядок")
         print("✅ Автоматичне видалення символів @ з імен")
         print("✅ Послідовна обробка: користувач1 (всі дії) → користувач2 (всі дії) → ...")
         print("✅ Детальні логи для кожного користувача")
         print("✅ Безпечні затримки між користувачами")
-        print("=" * 60)
+        print("=" * 80)
         print("📋 План дій для кожного користувача:")
         print("1. 📸 Лайк постів: профіль → пост1 → лайк → назад → пост2 → лайк → назад")
         print("2. 📱 Сторіс: на профілі натиснути аватарку → лайк → відповідь")
         print("3. 💬 Fallback: якщо сторіс немає → Direct Messages → Next → повідомлення")
-        print("=" * 60)
+        print("=" * 80)
         
         # Запуск автоматизації
         success = bot.run_automation(TARGET_USERS, MESSAGES)
         
-        print("=" * 60)
+        print("=" * 80)
         if success:
-            print("🎉 Багатокористувацька автоматизація завершена! Перевірте деталі в логах.")
+            print("🎉 Автоматизація завершена успішно! Перевірте деталі в логах.")
+            print("✅ Всі типи сторінок входу підтримуються!")
         else:
             print("❌ Автоматизація завершена з помилками!")
-        print("=" * 60)
+            print("💡 Спробуйте ще раз - бот автоматично визначить тип сторінки")
+        print("=" * 80)
             
     except KeyboardInterrupt:
         print("\n⚠️ Автоматизацію перервано користувачем")
