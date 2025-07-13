@@ -22,18 +22,18 @@ class Config:
     MAX_USER_DELAY = 60   # Максимальна затримка між користувачами
     
     # Лімити безпеки
-    MAX_USERS_PER_SESSION = 50     # Максимум користувачів за одну сесію
-    MAX_USERS_PER_DAY = 100        # Максимум користувачів за день
-    MAX_DAILY_ACTIONS = 500        # Максимум дій за день
+    MAX_USERS_PER_SESSION = 5000     # Максимум користувачів за одну сесію
+    MAX_USERS_PER_DAY = 10000        # Максимум користувачів за день
+    MAX_DAILY_ACTIONS = 50000        # Максимум дій за день
     
     # Налаштування пакетної обробки
     BATCH_SIZE = 10               # Розмір пакету для обробки
     BATCH_DELAY = 300             # Затримка між пакетами (5 хвилин)
     
     # Кількість дій за замовчуванням
-    MAX_LIKES_PER_SESSION = 50
-    MAX_COMMENTS_PER_SESSION = 10
-    MAX_FOLLOWS_PER_SESSION = 20
+    MAX_LIKES_PER_SESSION = 5000
+    MAX_COMMENTS_PER_SESSION = 1000
+    MAX_FOLLOWS_PER_SESSION = 2000
     DEFAULT_POSTS_COUNT = 2        # Кількість постів для лайку за замовчуванням
     
     # Шляхи до файлів
